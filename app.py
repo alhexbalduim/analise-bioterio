@@ -52,11 +52,15 @@ if uploaded_file is not None:
         df['Linhagem'] = df['Linhagem'].astype(str).str.strip().str.upper()
         df['Sexo'] = df['Sexo'].astype(str).str.strip().str.upper()
 
-        # 2. Corrige formatação de decimais da Idade (substitui vírgula por ponto se necessário)
+        # 2. Corrige formatação de decimais da Idade e blinda contra textos/vazios inválidos
         if df['Idade'].dtype == 'object':
-            df['Idade'] = df['Idade'].astype(str).str.replace(',', '.').astype(float)
-        else:
-            df['Idade'] = df['Idade'].astype(float)
+            df['Idade'] = df['Idade'].astype(str).str.replace(',', '.').str.strip()
+        
+        # Converte para número e transforma qualquer texto inválido ou vazio em nulo (NaN) sem travar
+        df['Idade'] = pd.to_numeric(df['Idade'], errors='coerce')
+        
+        # Remove linhas onde a idade ou linhagem ficaram completamente inválidas ou vazias
+        df = df.dropna(subset=['Idade', 'Linhagem'])
 
         # 3. Garante que a quantidade seja numérica inteira
         df['Quantidade'] = pd.to_numeric(df['Quantidade'], errors='coerce').fillna(0).astype(int)
