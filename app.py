@@ -19,14 +19,11 @@ if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith('.csv'):
             try:
-                # Tenta ler no padrão Excel/BR (codificação latina e detectando o separador)
                 df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin1')
             except Exception:
-                # Segunda alternativa: tenta codificação universal UTF-8 se a anterior falhar
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='utf-8')
         else:
-            # Leitura nativa para arquivos Excel (.xlsx)
             df = pd.read_excel(uploaded_file)
             
     except Exception as e:
@@ -52,28 +49,28 @@ if uploaded_file is not None:
         df['Linhagem'] = df['Linhagem'].astype(str).str.strip().str.upper()
         df['Sexo'] = df['Sexo'].astype(str).str.strip().str.upper()
 
-        # 2. Corrige formatação de decimais da Idade e blinda contra textos/vazios inválidos
+        # 2. Corrige formatação de decimais da Idade e converte para número de forma segura
         if df['Idade'].dtype == 'object':
             df['Idade'] = df['Idade'].astype(str).str.replace(',', '.').str.strip()
         
-        # Converte para número e transforma qualquer texto inválido ou vazio em nulo (NaN) sem travar
+        # Converte para número. O que for inválido vira NaN (nulo), mas NÃO removemos a linha!
         df['Idade'] = pd.to_numeric(df['Idade'], errors='coerce')
         
-        # Remove linhas onde a idade ou linhagem ficaram completamente inválidas ou vazias
-        df = df.dropna(subset=['Idade', 'Linhagem'])
+        # Preenche idades vazias/inválidas com 0 para que apareçam nos gráficos e não sumam da tabela
+        df['Idade'] = df['Idade'].fillna(0)
 
         # 3. Garante que a quantidade seja numérica inteira
         df['Quantidade'] = pd.to_numeric(df['Quantidade'], errors='coerce').fillna(0).astype(int)
 
         # 4. Renomeia dinamicamente a 5ª coluna para "Destino" (onde fica E/Z), independente do tamanho do cabeçalho
-        if df.shape[1] >= 5:
-            df = df.rename(columns={df.columns[4]: 'Destino'})
+        if df.shape >= 5:
+            df = df.rename(columns={df.columns: 'Destino'})
             df['Destino'] = df['Destino'].astype(str).str.strip().str.upper()
         else:
             df['Destino'] = 'N/A'
 
         # --- VISUALIZAÇÃO PRINCIPAL ---
-        st.subheader("📋 Dados Carregados com Sucesso")
+        st.subheader(f"📋 Todos os Dados Carregados (Total de linhas na planilha: {len(df)})")
         st.dataframe(df, use_container_width=True)
 
         # --- FILTROS DE ISOLAMENTO NA BARRA LATERAL ---
