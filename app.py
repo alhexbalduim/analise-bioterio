@@ -63,8 +63,9 @@ if uploaded_file is not None:
         df['Quantidade'] = pd.to_numeric(df['Quantidade'], errors='coerce').fillna(0).astype(int)
 
         # 4. Renomeia dinamicamente a 5ª coluna para "Destino" (onde fica E/Z), independente do tamanho do cabeçalho
-        if df.shape >= 5:
-            df = df.rename(columns={df.columns: 'Destino'})
+        if len(df.columns) >= 5:
+            nome_coluna_5 = df.columns[4]
+            df = df.rename(columns={nome_coluna_5: 'Destino'})
             df['Destino'] = df['Destino'].astype(str).str.strip().str.upper()
         else:
             df['Destino'] = 'N/A'
