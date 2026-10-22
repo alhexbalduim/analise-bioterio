@@ -1,158 +1,132 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
+import scipy.stats as stats
 import plotly.express as px
-import io
+import plotly.graph_objects as go
 
-# Configuração da página do Streamlit
-st.set_page_config(page_title="Análise Biotério - Linhagens", layout="wide", page_icon="🧬")
+st.set_page_config(page_title="Analisador Estatístico", layout="wide")
 
-st.title("🧬 Painel Estatístico de Descarte e Eutanásia")
-st.markdown("Faça o upload da sua planilha para analisar os dados de forma segmentada e precisa.")
+st.title("📊 Analisador Estatístico Completo")
+st.write("Faça o upload do seu arquivo Excel ou CSV para calcular todas as estatísticas possíveis da sua coluna de dados.")
 
-# Upload de arquivos (Aceita Excel ou CSV)
-uploaded_file = st.file_uploader("Suba sua planilha Excel (.xlsx) ou CSV", type=["csv", "xlsx"])
+uploaded_file = st.sidebar.file_uploader("Envie seu arquivo (XLSX ou CSV)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
-    df = None
-    
-    # --- LEITURA BLINDADA ---
+    # Leitura do arquivo
     try:
         if uploaded_file.name.endswith('.csv'):
-            try:
-                df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='latin1')
-            except Exception:
-                uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='utf-8')
+            df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
             
-    except Exception as e:
-        st.error(f"❌ Erro crítico ao ler o arquivo: {e}")
-        st.stop()
-
-    if df is not None and not df.empty:
-        # --- TRATAMENTO AUTOMÁTICO DE DADOS ---
-        df.columns = df.columns.str.strip()
-
-        # Verificar colunas obrigatórias
-        colunas_obrigatorias = ['Linhagem', 'Quantidade', 'Idade', 'Sexo']
-        colunas_faltantes = [col for col in colunas_obrigatorias if col not in df.columns]
+        st.success("Arquivo carregado com sucesso!")
         
-        if colunas_faltantes:
-            st.error(f"❌ Erro na estrutura! A planilha precisa conter as colunas: {', '.join(colunas_faltantes)}")
-            st.stop()
-
-        # Padronização de textos
-        df['Linhagem'] = df['Linhagem'].astype(str).str.strip().str.upper()
-        df['Sexo'] = df['Sexo'].astype(str).str.strip().str.upper()
-
-        # Correção estrita de decimais da Idade
-        if df['Idade'].dtype == 'object':
-            df['Idade'] = df['Idade'].astype(str).str.replace(',', '.').str.strip()
-        df['Idade'] = pd.to_numeric(df['Idade'], errors='coerce').fillna(0)
-
-        # Quantidade como número inteiro
-        df['Quantidade'] = pd.to_numeric(df['Quantidade'], errors='coerce').fillna(0).astype(int)
-
-        # Renomeação da 5ª coluna (Destino: E/Z)
-        if len(df.columns) >= 5:
-            df = df.rename(columns={df.columns[4]: 'Destino'})
-            df['Destino'] = df['Destino'].astype(str).str.strip().str.upper()
+        # Seleção da coluna
+        numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if not numeric_columns:
+            st.error("Nenhuma coluna numérica foi encontrada no arquivo.")
         else:
-            df['Destino'] = 'N/A'
-
-        # ----------------------------------------------------
-        # PAINEL DE MULTI-FILTROS NA BARRA LATERAL (ESQUERDA)
-        # ----------------------------------------------------
-        st.sidebar.header("🔍 Painel de Filtros Avançados")
-        st.sidebar.markdown("Combine as opções abaixo para isolar as subpopulações do biotério:")
-
-        # 1. Filtro de Linhagem
-        lista_linhagens = ["Todas"] + sorted(df['Linhagem'].dropna().unique().tolist())
-        linhagem_sel = st.sidebar.selectbox("1. Filtrar por Linhagem:", lista_linhagens)
-
-        # 2. Filtro de Sexo
-        lista_sexos = ["Todos"] + sorted(df['Sexo'].dropna().unique().tolist())
-        sexo_sel = st.sidebar.selectbox("2. Filtrar por Sexo:", lista_sexos)
-
-        # 3. Filtro de Destino (Eutanásia/Zoológico)
-        lista_destinos = ["Todos"] + sorted(df['Destino'].dropna().unique().tolist())
-        destino_sel = st.sidebar.selectbox("3. Filtrar por Destino (E/Z):", lista_destinos)
-
-        # --- APLICAÇÃO DOS FILTROS SEQUENCIAIS ---
-        df_filtrado = df.copy()
-        
-        if linhagem_sel != "Todas":
-            df_filtrado = df_filtrado[df_filtrado['Linhagem'] == linhagem_sel]
+            selected_col = st.sidebar.selectbox("Selecione a coluna para análise:", numeric_columns)
             
-        if sexo_sel != "Todos":
-            df_filtrado = df_filtrado[df_filtrado['Sexo'] == sexo_sel]
+            # Limpeza dos dados (remover NaNs)
+            data = df[selected_col].dropna()
+            n = len(data)
             
-        if destino_sel != "Todos":
-            df_filtrado = df_filtrado[df_filtrado['Destino'] == destino_sel]
-
-        # --- VISUALIZAÇÃO DA TABELA FILTRADA ---
-        st.subheader(f"📋 Dados em Análise (Exibindo {len(df_filtrado)} de {len(df)} linhas totais)")
-        st.dataframe(df_filtrado, use_container_width=True)
-
-        # --- SEÇÃO DE ANÁLISES ---
-        st.header("📊 Relatórios e Estatísticas Combinadas")
-        tab1, tab2, tab3 = st.tabs(["📉 Métricas por Idade Exata", "📈 Análise Visual Separada", "💾 Exportação"])
-
-        with tab1:
-            st.subheader("Contagem Estrita do Grupo Filtrado")
-            df_grupos = df_filtrado.groupby(['Linhagem', 'Idade', 'Sexo', 'Destino']).agg(
-                Total_Animais_Descartados=('Quantidade', 'sum'),
-                Lotes_Registrados=('Quantidade', 'count')
-            ).reset_index()
-            st.dataframe(df_grupos, use_container_width=True)
-            
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.subheader("Proporção de Destino Atual")
-                df_dest = df_filtrado.groupby('Destino').agg(Total=('Quantidade','sum')).reset_index()
-                st.dataframe(df_dest, use_container_width=True)
-            with col_b:
-                st.subheader("Resumo Fisiológico das Idades")
-                resumo_idade_real = df_filtrado.groupby('Linhagem')['Idade'].describe()[['min', '50%', 'max', 'count']]
-                st.dataframe(resumo_idade_real, use_container_width=True)
-
-        with tab2:
-            st.subheader("Gráficos de Distribuição Estrita")
-            
-            fig_scatter = px.scatter(
-                df_filtrado, x='Idade', y='Quantidade', color='Linhagem', symbol='Sexo', size='Quantidade',
-                title="Dispersão: Distribuição Fisiológica do Grupo Filtrado",
-                labels={'Idade': 'Idade Fisiológica'}
-            )
-            st.plotly_chart(fig_scatter, use_container_width=True)
-
-            col_g1, col_g2 = st.columns(2)
-            with col_g1:
-                fig_bar_idade = px.bar(
-                    df_grupos, x='Idade', y='Total_Animais_Descartados', color='Sexo', barmode='group',
-                    title="Volume Total por Idade e Sexo", text_auto=True
-                )
-                st.plotly_chart(fig_bar_idade, use_container_width=True)
-            with col_g2:
-                fig_box_real = px.box(
-                    df_filtrado, x='Linhagem', y='Idade', color='Sexo', points="all",
-                    title="Janela Biológica de Idades Atendidas"
-                )
-                st.plotly_chart(fig_box_real, use_container_width=True)
-
-        with tab3:
-            st.subheader("Baixar Planilha de Análise Gerada")
-            output_excel = io.BytesIO()
-            with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-                df_grupos.to_excel(writer, sheet_name='Segmentacao Estrita', index=False)
-                df_filtrado.to_excel(writer, sheet_name='Dados Filtrados', index=False)
+            if n < 2:
+                st.warning("A coluna selecionada precisa ter pelo menos 2 valores numéricos válidos.")
+            else:
+                # --- CÁLCULOS ESTATÍSTICOS ---
+                mean = float(np.mean(data))
+                std_err = float(stats.sem(data))
+                
+                # Intervalo de Confiança de 95% (Distribuição t de Student)
+                ci_95 = stats.t.interval(0.95, df=n-1, loc=mean, scale=std_err)
+                
+                # Outras métricas
+                median = float(np.median(data))
+                
+                # Correção segura para a Moda nas versões recentes do SciPy
+                mode_res = stats.mode(data, keepdims=True)
+                if mode_res.mode.size > 0:
+                    mode_val = float(mode_res.mode.flatten()[0])
+                else:
+                    mode_val = np.nan
                     
-            st.download_button(
-                label="📥 Baixar Dados Segregados por Filtro Atual (Excel)",
-                data=output_excel.getvalue(),
-                file_name="relatorio_customizado_bioterio.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+                std_dev = float(np.std(data, ddof=1))
+                variance = float(np.var(data, ddof=1))
+                q25, q75 = np.percentile(data, [25, 75])
+                iqr = float(q75 - q25)
+                skewness = float(stats.skew(data))
+                kurtosis = float(stats.kurtosis(data))
+                
+                # --- EXIBIÇÃO EM DESTAQUE: INTERVALO DE CONFIANÇA ---
+                st.subheader("🎯 Intervalo de Confiança de 95% para a Média")
+                col_ic1, col_ic2, col_ic3 = st.columns(3)
+                col_ic1.metric("Limite Inferior (95%)", f"{ci_95[0]:.4f}")
+                col_ic2.metric("Média Amostral", f"{mean:.4f}")
+                col_ic3.metric("Limite Superior (95%)", f"{ci_95[1]:.4f}")
+                
+                st.info(f"Com 95% de confiança, a verdadeira média da população está contida no intervalo entre **{ci_95[0]:.4f}** e **{ci_95[1]:.4f}**.")
+                
+                st.markdown("---")
+                
+                # --- PAINEL DE MÉTRICAS ---
+                st.subheader("📈 Resumo Estatístico")
+                
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Total de Observações (N)", n)
+                c2.metric("Média", f"{mean:.4f}")
+                c3.metric("Mediana", f"{median:.4f}")
+                if not np.isnan(mode_val):
+                    c4.metric("Moda", f"{mode_val:.4f}")
+                else:
+                    c4.metric("Moda", "N/A")
+                
+                c5, c6, c7, c8 = st.columns(4)
+                c5.metric("Desvio Padrão", f"{std_dev:.4f}")
+                c6.metric("Variância", f"{variance:.4f}")
+                c7.metric("Erro Padrão da Média", f"{std_err:.4f}")
+                c8.metric("Amplitude Interquartil (IQR)", f"{iqr:.4f}")
+                
+                c9, c10, c11, c12 = st.columns(4)
+                c9.metric("Valor Mínimo", f"{float(np.min(data)):.4f}")
+                c10.metric("1º Quartil (25%)", f"{float(q25):.4f}")
+                c11.metric("3º Quartil (75%)", f"{float(q75):.4f}")
+                c12.metric("Valor Máximo", f"{float(np.max(data)):.4f}")
+                
+                c13, c14 = st.columns(2)
+                c13.metric("Assimetria (Skewness)", f"{skewness:.4f}")
+                c14.metric("Curtose (Kurtosis)", f"{kurtosis:.4f}")
+                
+                st.markdown("---")
+                
+                # --- VISUALIZAÇÃO GRÁFICA ---
+                st.subheader("📊 Visualização dos Dados")
+                
+                tab1, tab2 = st.tabs(["Histograma com IC 95%", "Boxplot"])
+                
+                with tab1:
+                    # Criando DataFrame temporário limpo para o Plotly Express rodar sem problemas de indexação
+                    plot_df = pd.DataFrame({selected_col: data})
+                    fig_hist = px.histogram(plot_df, x=selected_col, nbins=30, title="Distribuição dos Dados", marginal="rug")
+                    
+                    # Correção: Passando os índices corretos [0] e [1] para as linhas verticais
+                    fig_hist.add_vline(x=mean, line_dash="solid", line_color="red", annotation_text="Média")
+                    fig_hist.add_vline(x=float(ci_95[0]), line_dash="dash", line_color="green", annotation_text="IC 95% Inf")
+                    fig_hist.add_vline(x=float(ci_95[1]), line_dash="dash", line_color="green", annotation_text="IC 95% Sup")
+                    
+                    fig_hist.update_layout(autosize=True, height=500)
+                    st.plotly_chart(fig_hist, use_container_width=True)
+                    
+                with tab2:
+                    # Correção: Usando os dados filtrados em um novo DataFrame limpo para evitar conflitos no Streamlit Cloud
+                    fig_box = px.box(plot_df, y=selected_col, points="all", title="Boxplot com Detecção de Outliers")
+                    fig_box.update_layout(autosize=True, height=500)
+                    st.plotly_chart(fig_box, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Erro ao processar o arquivo: {e}")
 else:
-    st.warning("⚠️ Aguardando o upload do arquivo Excel ou CSV para iniciar as análises estatísticas.")
+    st.info("Aguardando o envio do arquivo na barra lateral à esquerda.")
