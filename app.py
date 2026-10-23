@@ -5,7 +5,7 @@ import scipy.stats as stats
 import plotly.express as px
 import plotly.graph_objects as go
 
-# Configuração da página
+# Configuração da páginaa
 st.set_page_config(page_title="Analisador de Linhagens e Idades", layout="wide")
 
 st.title("🧬 Analisador Estatístico de Linhagens e Bioterio")
