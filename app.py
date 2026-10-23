@@ -1,114 +1,127 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import io
+st.caption(
+        "O eixo X contém intervalos em dias; o eixo Y soma a coluna Quantidade. "
+        "O filtro de linhagem e sexo é aplicado antes da contagem."
+    )
 
-# Configuração da página do Streamlit
-st.set_page_config(page_title="Análise Biotério - Linhagens", layout="wide", page_icon="🧬")
+    largura = int(largura_intervalo)
+    idade_min_sel = int(df_filtrado["Idade (dias)"].min())
+    idade_max_sel = int(df_filtrado["Idade (dias)"].max())
+    inicio = (idade_min_sel // largura) * largura
+    fim_exclusivo = (idade_max_sel // largura + 1) * largura
+    bordas = np.arange(inicio, fim_exclusivo + 1, largura)
+    if len(bordas) < 2:
+        bordas = np.array([inicio, inicio + largura])
 
-st.title("🧬 Painel Estatístico de Descarte e Eutanásia")
-st.markdown("Faça o upload da sua planilha para analisar os dados sem misturar Linhagens, Idades ou Sexo.")
+    rotulos = [
+        f"{int(bordas[i])}–{int(bordas[i + 1] - 1)} dias"
+        for i in range(len(bordas) - 1)
+    ]
+    df_filtrado["Intervalo de idade"] = pd.cut(
+        df_filtrado["Idade (dias)"],
+        bins=bordas,
+        labels=rotulos,
+        right=False,
+        include_lowest=True,
+    )
 
-# Upload de arquivos (Aceita Excel do Sheets/Excel ou CSV)
-uploaded_file = st.file_uploader("Suba sua planilha Excel (.xlsx) ou CSV", type=["csv", "xlsx"])
+    frequencia = (
+        df_filtrado.groupby("Intervalo de idade", observed=False)["Quantidade"]
+        .sum()
+        .reindex(rotulos, fill_value=0)
+        .rename("Quantidade de animais")
+        .reset_index()
+    )
 
-if uploaded_file is not None:
-    # Leitura do arquivo conforme a extensão
-    if uploaded_file.name.endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
+    fig_freq = px.bar(
+        frequencia,
+        x="Intervalo de idade",
+        y="Quantidade de animais",
+        text="Quantidade de animais",
+        title="Distribuição de frequência das idades",
+    )
+    fig_freq.update_traces(textposition="outside", cliponaxis=False)
+    fig_freq.update_layout(
+        xaxis_title="Intervalos de idade",
+        yaxis_title="Quantidade de animais",
+        xaxis={"categoryorder": "array", "categoryarray": rotulos},
+        margin={"t": 70, "b": 70},
+    )
+    st.plotly_chart(fig_freq, use_container_width=True)
+    st.dataframe(frequencia, use_container_width=True, hide_index=True)
+
+with aba_box:
+    st.subheader("Boxplot das idades por linhagem e sexo")
+    st.caption(
+        "O boxplot considera os animais individualmente, repetindo a idade de cada lote "
+        "de acordo com Quantidade quando o total é administrável. Assim, lotes maiores "
+        "contribuem proporcionalmente para a distribuição."
+    )
+
+    quantidade = df_filtrado["Quantidade"].to_numpy(dtype=float)
+    quantidades_inteiras = np.all(np.isclose(quantidade, np.round(quantidade)))
+    total_expandido = int(np.round(quantidade).sum()) if quantidades_inteiras else 0
+
+    if quantidades_inteiras and 0 < total_expandido <= 50000:
+        indices = np.repeat(
+            np.arange(len(df_filtrado)),
+            np.round(quantidade).astype(int),
+        )
+        fonte_box = df_filtrado.reset_index(drop=True).iloc[indices].copy()
+        rotulo_box = "Distribuição por animal (ponderada por Quantidade)"
     else:
-        df = pd.read_excel(uploaded_file)
-
-    # --- TRATAMENTO AUTOMÁTICO DE DADOS ---
-    # 1. Unifica caixa alta/baixa (ex: Balb e BALB viram BALB) e remove espaços extras
-    df['Linhagem'] = df['Linhagem'].astype(str).str.strip().str.upper()
-
-    # 2. Corrige formatação de decimais da Idade (substitui vírgula brasileira por ponto)
-    if df['Idade'].dtype == 'object':
-        df['Idade'] = df['Idade'].astype(str).str.replace(',', '.').astype(float)
-
-    # 3. Renomeia dinamicamente a 5ª coluna para "Destino" (onde fica E/Z), independente do tamanho do cabeçalho
-    if df.shape[1] >= 5:
-        df = df.rename(columns={df.columns[4]: 'Destino'})
-
-    # --- VISUALIZAÇÃO PRINCIPAL ---
-    st.subheader("📋 Dados Carregados com Sucesso")
-    st.dataframe(df, use_container_width=True)
-
-    # --- FILTROS DE ISOLAMENTO NA BARRA LATERAL ---
-    st.sidebar.header("🔍 Filtros de Isolamento")
-    todas_linhagens = ["Todas"] + sorted(df['Linhagem'].unique().tolist())
-    linhagem_sel = st.sidebar.selectbox("Escolha a Linhagem para Isolar:", todas_linhagens)
-
-    # Aplica o filtro selecionado pelo usuário
-    df_filtrado = df if linhagem_sel == "Todas" else df[df['Linhagem'] == linhagem_sel]
-
-    # --- SEÇÃO DE ANÁLISES ---
-    st.header(f"📊 Estatísticas Detalhadas - Grupo: {linhagem_sel}")
-    tab1, tab2, tab3 = st.tabs(["📉 Métricas por Idade Exata", "📈 Análise Visual Separada", "💾 Exportação"])
-
-    with tab1:
-        st.subheader("Contagem Estrita por Linhagem, Idade e Sexo")
-        st.markdown("Esta tabela detalha os totais exatos sem misturar animais novos com animais velhos:")
-        
-        # Agrupamento refinado por subgrupos biológicos reais
-        df_grupos = df_filtrado.groupby(['Linhagem', 'Idade', 'Sexo', 'Destino']).agg(
-            Total_Animais_Descartados=('Quantidade', 'sum'),
-            Lotes_Registrados=('Quantidade', 'count')
-        ).reset_index()
-        
-        st.dataframe(df_grupos, use_container_width=True)
-        
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.subheader("Proporção de Destino (Eutanásia vs Zoológico)")
-            df_dest = df_filtrado.groupby('Destino').agg(Total=('Quantidade','sum')).reset_index()
-            st.dataframe(df_dest, use_container_width=True)
-        with col_b:
-            st.subheader("Faixas de Idade Atendidas (Resumo)")
-            resumo_idade_real = df_filtrado.groupby('Linhagem')['Idade'].describe()[['min', '50%', 'max', 'count']]
-            st.dataframe(resumo_idade_real, use_container_width=True)
-
-    with tab2:
-        st.subheader("Gráficos de Distribuição Estrita")
-        st.markdown("*Dica: Use a câmera fotográfica no canto superior direito de cada gráfico para baixá-los como imagem.*")
-        
-        # Gráfico de dispersão inteligente: evita o efeito de caixa única
-        fig_scatter = px.scatter(
-            df_filtrado, x='Idade', y='Quantidade', color='Linhagem', symbol='Sexo', size='Quantidade',
-            hover_data=['Data nascimento', 'Destino'], title="Dispersão: Cada ponto é um registro real no tempo",
-            labels={'Idade': 'Idade Fisiológica'}
-        )
-        st.plotly_chart(fig_scatter, use_container_width=True)
-
-        col_g1, col_g2 = st.columns(2)
-        with col_g1:
-            fig_bar_idade = px.bar(
-                df_grupos, x='Idade', y='Total_Animais_Descartados', color='Sexo', barmode='group',
-                facet_row='Destino', title="Total de Animais por Idades Fisiológicas e Destino", text_auto=True
+        fonte_box = df_filtrado.copy()
+        if not quantidades_inteiras:
+            st.warning(
+                "Há quantidades fracionárias. Para evitar distorção, o boxplot mostra "
+                "cada registro uma vez, sem ponderar pela Quantidade."
             )
-            st.plotly_chart(fig_bar_idade, use_container_width=True)
-        with col_g2:
-            fig_box_real = px.box(
-                df_filtrado, x='Linhagem', y='Idade', color='Sexo', points="all",
-                title="Janela Biológica de Idades por Linhagem"
+        elif total_expandido > 50000:
+            st.warning(
+                "O total ultrapassa 50.000 animais; para evitar consumo excessivo de "
+                "memória, o boxplot mostra cada registro uma vez, sem ponderar pela Quantidade."
             )
-            st.plotly_chart(fig_box_real, use_container_width=True)
+        rotulo_box = "Distribuição por registro/lote (não ponderada)"
 
-    with tab3:
-        st.subheader("Baixar Planilha de Análise Gerada")
-        
-        output_excel = io.BytesIO()
-        with pd.ExcelWriter(output_excel, engine='xlsxwriter') as writer:
-            df_grupos.to_excel(writer, sheet_name='Segmentacao Estrita', index=False)
-            if linhagem_sel == "Todas":
-                resumo_idade_real.to_excel(writer, sheet_name='Resumo Idades')
-                
-        st.download_button(
-            label="📥 Baixar Dados Segregados por Linhagem/Idade (Excel)",
-            data=output_excel.getvalue(),
-            file_name=f"relatorio_bioterio_{linhagem_sel}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-else:
-    st.warning("⚠️ Aguardando o upload do arquivo Excel ou CSV para iniciar as análises estatísticas.")
+    fig_box = px.box(
+        fonte_box,
+        x="Linhagem",
+        y="Idade (dias)",
+        color="Sexo",
+        points="all",
+        hover_data=["Destino"],
+        title="Distribuição das idades por linhagem e sexo",
+    )
+    fig_box.update_layout(
+        xaxis_title="Linhagem",
+        yaxis_title="Idade (dias)",
+        boxmode="group",
+    )
+    st.plotly_chart(fig_box, use_container_width=True)
+    st.caption(rotulo_box)
+
+with aba_dados:
+    st.subheader("Dados incluídos na análise")
+    colunas = [
+        coluna for coluna in [
+            "Linhagem", "Data nascimento", "Sexo", "Quantidade", "Destino",
+            "Dia do descarte", "Observação", "Idade informada", "Idade (dias)",
+        ]
+        if coluna in df_filtrado.columns
+    ]
+    st.dataframe(
+        df_filtrado[colunas].sort_values(["Linhagem", "Idade (dias)", "Sexo"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    saida = io.BytesIO()
+    with pd.ExcelWriter(saida, engine="xlsxwriter") as writer:
+        df_filtrado[colunas].to_excel(writer, sheet_name="Dados filtrados", index=False)
+        frequencia.to_excel(writer, sheet_name="Frequencia por idade", index=False)
+
+    st.download_button(
+        "📥 Baixar dados e frequência em Excel",
+        data=saida.getvalue(),
+        file_name="relatorio_bioterio.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
