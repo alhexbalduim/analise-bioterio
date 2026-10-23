@@ -76,9 +76,9 @@ if uploaded_file is not None:
             if len(quebras_calculadas) < 2:
                 quebras_calculadas = np.array([int(idades_reais.min()), int(idades_reais.max() + 1)])
         else:
-            quebras_calculadas = np.array([0, 100])
+            quebras_calculadas = np.array()
 
-        # Criação dos rótulos matemáticos na notação de intervalo clássica: [a, b) ou a ⊢ b
+        # Criação dos rótulos matemáticos na notação de intervalo clássica: [inicio ⊢ fim)
         rotulos_matematicos = []
         for i in range(len(quebras_calculadas)-1):
             inicio = quebras_calculadas[i]
@@ -189,30 +189,26 @@ if uploaded_file is not None:
             
         st.dataframe(resumo_estatistico, use_container_width=True, hide_index=True)
 
-        # --- TESTES DE HIPÓTESES AUTOMÁTICOS ---
+        # --- TESTES DE HIPÓTESES AUTOMÁTICOS (REESCRITO SEM ANINHAMENTO) ---
         st.markdown("---")
         st.subheader("🔬 Inferência Estatística Avançada")
         
         grupos_teste = [df_filtered[df_filtered['linhagem_sexo'] == g][c_idade].values for g in df_filtered['linhagem_sexo'].unique()]
         
+        # Só executa o bloco se houver dados suficientes
         if len(grupos_teste) > 1 and all(len(g) > 2 for g in grupos_teste):
             st.markdown("**Comparação estatística entre os grupos selecionados na barra lateral:**")
             tamanho_amostra = min(len(df_filtered), 500)
             stat_sh, p_sh = stats.shapiro(df_filtered[c_idade].sample(tamanho_amostra, random_state=42))
             
-            # Escolha simplificada e linear do teste estatístico adequado
-            if p_sh > 0.05:
-                f_stat, p_val = stats.f_oneway(*grupos_teste)
-                teste_nome = "ANOVA (Paramétrico)"
-            else:
-                f_stat, p_val = stats.kruskal(*grupos_teste)
-                teste_nome = "Kruskal-Wallis (Não-Paramétrico)"
-                
+            # Se p_sh > 0.05 usa ANOVA, caso contrário Kruskal-Wallis
+            p_val = stats.f_oneway(*grupos_teste)[1] if p_sh > 0.05 else stats.kruskal(*grupos_teste)[1]
+            teste_nome = "ANOVA (Paramétrico)" if p_sh > 0.05 else "Kruskal-Wallis (Não-Paramétrico)"
+            
+            # Exibição do resultado do p-valor de forma direta
             if p_val < 0.05:
                 st.error(f"🔴 **Diferença Significativa Encontrada!** ({teste_nome}: p-valor = {p_val:.5f}). As idades variam de forma relevante entre os grupos filtrados.")
-            else:
+            if p_val >= 0.05:
                 st.info(f"🟢 **Sem Diferença Significativa.** ({teste_nome}: p-valor = {p_val:.5f}). As idades dos grupos filtrados são estatisticamente comparáveis.")
 
     except Exception as e:
-        st.error(f"Erro crítico ao processar o arquivo: {e}")
-else:
