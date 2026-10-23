@@ -25,14 +25,15 @@ if uploaded_file is not None:
         st.success("Arquivo carregado com sucesso!")
         
         # Mapeamento e padronização automática das colunas (Case-insensitive)
+        # Mantemos uma cópia original para exibição se necessário, mas limpamos os nomes das colunas
         df.columns = [str(c).strip().lower() for c in df.columns]
         
         # Dicionário para tentar encontrar as colunas corretas mesmo com nomes ligeiramente diferentes
         col_map = {
-            'idade': [c for c in df.columns if 'idade' in c or 'age' in c or 'dias' in c],
+            'idade': [c for c in df.columns if 'idade' in c or 'age' in c or 'dias' in c or 'sem' in c],
             'linhagem': [c for c in df.columns if 'linhagem' in c or 'strain' in c or 'grupo' in c],
             'sexo': [c for c in df.columns if 'sexo' in c or 'sex' in c or 'genero' in c],
-            'descarte': [c for c in df.columns if 'descarte' in c or 'tipo' in c or 'destino' in c]
+            'descarte': [c for c in df.columns if 'descarte' in c or 'tipo' in c or 'destino' in c or 'motivo' in c]
         }
         
         # Validação das colunas obrigatórias
@@ -47,37 +48,47 @@ if uploaded_file is not None:
         c_sexo = col_map['sexo'][0]
         c_desc = col_map['descarte'][0] if col_map['descarte'] else None
         
-        # Limpeza inicial de dados essenciais
+        # Limpeza inicial de dados essenciais (remover linhas onde idade, linhagem ou sexo estão vazios)
         df = df.dropna(subset=[c_idade, c_linha, c_sexo])
         df[c_idade] = pd.to_numeric(df[c_idade], errors='coerce')
         df = df.dropna(subset=[c_idade])
         
-        # Criando a coluna combinada padrão: Linhagem(Sexo) ex: BALB(M)
+        # Padronização rigorosa de strings para evitar erros de digitação (Remover espaços e por em Maiúsculo)
         df['sexo_clean'] = df[c_sexo].astype(str).str.strip().str.upper()
-        df['linhagem_clean'] = df[c_linha].astype(str).str.strip()
+        df['linhagem_clean'] = df[c_linha].astype(str).str.strip().str.upper()
         df['linhagem_sexo'] = df['linhagem_clean'] + "(" + df['sexo_clean'] + ")"
+
+        if c_desc:
+            # Padroniza também a coluna de descarte para evitar que 'e' e 'E' fiquem separados
+            df['descarte_clean'] = df[c_desc].astype(str).str.strip().str.upper()
 
         # --- PAINEL DE FILTROS NA SIDEBAR ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("2. Filtros do Painel")
         
-        # Filtro de Linhagens
+        # Filtro de Linhagens (Vem com todas selecionadas por padrão)
         todas_linhagens = sorted(df['linhagem_clean'].unique())
         sub_linhagens = st.sidebar.multiselect("Filtrar Linhagens:", todas_linhagens, default=todas_linhagens)
         
-        # Filtro de Tipo de Descarte (se a coluna existir)
-        sub_descartes = None
+        # Filtro de Tipo de Descarte (Se não selecionar nenhum, ele não zera, ele mostra TODOS)
+        sub_descartes = []
         if c_desc:
-            todos_descartes = sorted(df[c_desc].dropna().unique())
-            sub_descartes = st.sidebar.multiselect("Filtrar Tipo de Descarte:", todos_descartes, default=todos_descartes)
+            todos_descartes = sorted(df['descarte_clean'].dropna().unique())
+            sub_descartes = st.sidebar.multiselect(
+                "Filtrar Tipo de Descarte (Vazio = Todos):", 
+                todos_descartes, 
+                default=[] # Inicia vazio para não aplicar restrição logo de cara
+            )
             
-        # Aplicando os filtros no DataFrame de análise
+        # Aplicando os filtros de forma segura no DataFrame de análise
         df_filtered = df[df['linhagem_clean'].isin(sub_linhagens)]
-        if c_desc and sub_descartes:
-            df_filtered = df_filtered[df_filtered[c_desc].isin(sub_descartes)]
+        
+        # Se o usuário escolheu filtros de descarte, aplicamos. Se deixou vazio, ignora o filtro (mostra tudo).
+        if c_desc and len(sub_descartes) > 0:
+            df_filtered = df_filtered[df_filtered['descarte_clean'].isin(sub_descartes)]
             
         if df_filtered.empty:
-            st.warning("Nenhum dado sobrou após aplicar os filtros selecionados na barra lateral.")
+            st.warning("⚠️ Nenhum dado sobrou após aplicar os filtros selecionados. Certifique-se de que a combinação de Linhagem e Descarte selecionada existe na planilha.")
             st.stop()
 
         # --- VISUALIZAÇÃO PADRÃO (HISTOGRAMA COMPORTADO POR LINHAGEM(SEXO)) ---
@@ -86,7 +97,6 @@ if uploaded_file is not None:
         tab1, tab2 = st.tabs(["Histograma Comparativo", "Boxplot de Outliers"])
         
         with tab1:
-            # Histograma agrupado por Linhagem(Sexo) com sobreposição suave (bimodal/multimodal)
             fig_hist = px.histogram(
                 df_filtered, 
                 x=c_idade, 
@@ -102,7 +112,6 @@ if uploaded_file is not None:
             st.plotly_chart(fig_hist, use_container_width=True)
             
         with tab2:
-            # Boxplot exibindo a dispersão e mediana exata de cada subgrupo linhagem(sexo)
             fig_box = px.box(
                 df_filtered, 
                 x='linhagem_sexo', 
@@ -120,7 +129,6 @@ if uploaded_file is not None:
         # --- EXTRAÇÃO ESTATÍSTICA MÁXIMA ---
         st.subheader("📈 Relatório Estatístico Agrupado")
         
-        # Tabela dinâmica com o resumo de cada Linhagem(Sexo)
         resumo_estatistico = df_filtered.groupby('linhagem_sexo')[c_idade].agg(
             Total_N='count',
             Média='mean',
@@ -131,7 +139,6 @@ if uploaded_file is not None:
             Máximo='max'
         ).reset_index()
         
-        # Formatação para exibição limpa
         for col in ['Média', 'Mediana', 'Desvio_Padrão', 'Erro_Padrão']:
             resumo_estatistico[col] = resumo_estatistico[col].round(3)
             
@@ -141,20 +148,21 @@ if uploaded_file is not None:
         st.markdown("---")
         st.subheader("🔬 Inferência Estatística Avançada")
         
-        # 1. Comparação entre Linhagens (ANOVA ou Kruskal-Wallis)
-        grupos_linhagem = [df_filtered[df_filtered['linhagem_clean'] == lin][c_idade].values for lin in df_filtered['linhagem_clean'].unique()]
+        # 1. Comparação entre Linhagens
+        linhagens_unicas = df_filtered['linhagem_clean'].unique()
+        grupos_linhagem = [df_filtered[df_filtered['linhagem_clean'] == lin][c_idade].values for lin in linhagens_unicas]
         
         if len(grupos_linhagem) > 1 and all(len(g) > 2 for g in grupos_linhagem):
             st.markdown("**Comparação de Idade entre Linhagens Diferentes:**")
-            # Teste de normalidade rápido (Shapiro) para decidir o teste ideal
-            stat_sh, p_sh = stats.shapiro(df_filtered[c_idade].sample(min(len(df_filtered), 500)))
+            
+            # Amostragem segura para teste de shapiro
+            tamanho_amostra = min(len(df_filtered), 500)
+            stat_sh, p_sh = stats.shapiro(df_filtered[c_idade].sample(tamanho_amostra, random_state=42))
             
             if p_sh > 0.05:
-                # Dados Normais -> ANOVA
                 f_stat, p_val = stats.f_oneway(*grupos_linhagem)
                 teste_nome = "ANOVA (Paramétrico)"
             else:
-                # Dados Não-Normais -> Kruskal-Wallis
                 f_stat, p_val = stats.kruskal(*grupos_linhagem)
                 teste_nome = "Kruskal-Wallis (Não-Paramétrico)"
                 
@@ -172,12 +180,11 @@ if uploaded_file is not None:
             t_stat, p_val_sex = stats.mannwhitneyu(machos, femeas, alternative='two-sided')
             
             if p_val_sex < 0.05:
-                st.error(f"🔴 **Diferença Significativa entre Sexos!** (Mann-Whitney U: p-valor = {p_val_sex:.5f}). Machos e fêmeas possuem idades de descarte/análise significativamente diferentes.")
+                st.error(f"🔴 **Diferença Significativa entre Sexos!** (Mann-Whitney U: p-valor = {p_val_sex:.5f}). Machos e fêmeas possuem idades significativamente diferentes.")
             else:
                 st.info(f"🟢 **Sem Diferença Significativa entre Sexos.** (Mann-Whitney U: p-valor = {p_val_sex:.5f}). Não há disparidade estatística nas idades de machos e fêmeas.")
 
     except Exception as e:
         st.error(f"Erro ao processar e calcular estatísticas do arquivo: {e}")
-        st.info("💡 Dica: Verifique se os nomes das colunas na sua planilha contêm palavras como 'Idade', 'Linhagem' e 'Sexo'.")
 else:
     st.info("📊 Aguardando o envio do arquivo na barra lateral para renderizar o histograma e filtros padrão.")
