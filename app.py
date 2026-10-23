@@ -5,16 +5,18 @@ import scipy.stats as stats
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="Analisador Estatístico", layout="wide")
+# Configuração da página
+st.set_page_config(page_title="Analisador de Linhagens e Idades", layout="wide")
 
-st.title("📊 Analisador Estatístico Completo")
-st.write("Faça o upload do seu arquivo Excel ou CSV para calcular todas as estatísticas possíveis da sua coluna de dados.")
+st.title("🧬 Analisador Estatístico de Linhagens e Bioterio")
+st.write("Faça o upload do seu arquivo para analisar as faixas de idade por linhagem/sexo, aplicar filtros e rodar testes estatísticos automáticos.")
 
-uploaded_file = st.sidebar.file_uploader("Envie seu arquivo (XLSX ou CSV)", type=["xlsx", "xls", "csv"])
+# Sidebar para Upload
+uploaded_file = st.sidebar.file_uploader("1. Envie seu arquivo (XLSX, XLS ou CSV)", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
-    # Leitura do arquivo
     try:
+        # Leitura do arquivo
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
@@ -22,111 +24,160 @@ if uploaded_file is not None:
             
         st.success("Arquivo carregado com sucesso!")
         
-        # Seleção da coluna
-        numeric_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+        # Mapeamento e padronização automática das colunas (Case-insensitive)
+        df.columns = [str(c).strip().lower() for c in df.columns]
         
-        if not numeric_columns:
-            st.error("Nenhuma coluna numérica foi encontrada no arquivo.")
-        else:
-            selected_col = st.sidebar.selectbox("Selecione a coluna para análise:", numeric_columns)
+        # Dicionário para tentar encontrar as colunas corretas mesmo com nomes ligeiramente diferentes
+        col_map = {
+            'idade': [c for c in df.columns if 'idade' in c or 'age' in c or 'dias' in c],
+            'linhagem': [c for c in df.columns if 'linhagem' in c or 'strain' in c or 'grupo' in c],
+            'sexo': [c for c in df.columns if 'sexo' in c or 'sex' in c or 'genero' in c],
+            'descarte': [c for c in df.columns if 'descarte' in c or 'tipo' in c or 'destino' in c]
+        }
+        
+        # Validação das colunas obrigatórias
+        if not col_map['idade'] or not col_map['linhagem'] or not col_map['sexo']:
+            st.error("⚠️ O arquivo precisa conter colunas para: Idade (numérica), Linhagem e Sexo.")
+            st.write("Colunas encontradas no seu arquivo:", list(df.columns))
+            st.stop()
             
-            # Limpeza dos dados (remover NaNs)
-            data = df[selected_col].dropna()
-            n = len(data)
+        # Renomeia para um padrão interno estável
+        c_idade = col_map['idade'][0]
+        c_linha = col_map['linhagem'][0]
+        c_sexo = col_map['sexo'][0]
+        c_desc = col_map['descarte'][0] if col_map['descarte'] else None
+        
+        # Limpeza inicial de dados essenciais
+        df = df.dropna(subset=[c_idade, c_linha, c_sexo])
+        df[c_idade] = pd.to_numeric(df[c_idade], errors='coerce')
+        df = df.dropna(subset=[c_idade])
+        
+        # Criando a coluna combinada padrão: Linhagem(Sexo) ex: BALB(M)
+        df['sexo_clean'] = df[c_sexo].astype(str).str.strip().str.upper()
+        df['linhagem_clean'] = df[c_linha].astype(str).str.strip()
+        df['linhagem_sexo'] = df['linhagem_clean'] + "(" + df['sexo_clean'] + ")"
+
+        # --- PAINEL DE FILTROS NA SIDEBAR ---
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("2. Filtros do Painel")
+        
+        # Filtro de Linhagens
+        todas_linhagens = sorted(df['linhagem_clean'].unique())
+        sub_linhagens = st.sidebar.multiselect("Filtrar Linhagens:", todas_linhagens, default=todas_linhagens)
+        
+        # Filtro de Tipo de Descarte (se a coluna existir)
+        sub_descartes = None
+        if c_desc:
+            todos_descartes = sorted(df[c_desc].dropna().unique())
+            sub_descartes = st.sidebar.multiselect("Filtrar Tipo de Descarte:", todos_descartes, default=todos_descartes)
             
-            if n < 2:
-                st.warning("A coluna selecionada precisa ter pelo menos 2 valores numéricos válidos.")
+        # Aplicando os filtros no DataFrame de análise
+        df_filtered = df[df['linhagem_clean'].isin(sub_linhagens)]
+        if c_desc and sub_descartes:
+            df_filtered = df_filtered[df_filtered[c_desc].isin(sub_descartes)]
+            
+        if df_filtered.empty:
+            st.warning("Nenhum dado sobrou após aplicar os filtros selecionados na barra lateral.")
+            st.stop()
+
+        # --- VISUALIZAÇÃO PADRÃO (HISTOGRAMA COMPORTADO POR LINHAGEM(SEXO)) ---
+        st.subheader("📊 Gráficos de Distribuição por Linhagem e Sexo")
+        
+        tab1, tab2 = st.tabs(["Histograma Comparativo", "Boxplot de Outliers"])
+        
+        with tab1:
+            # Histograma agrupado por Linhagem(Sexo) com sobreposição suave (bimodal/multimodal)
+            fig_hist = px.histogram(
+                df_filtered, 
+                x=c_idade, 
+                color='linhagem_sexo', 
+                barmode='overlay', 
+                marginal='rug',
+                title="Distribuição das Faixas de Idade por Linhagem (Sexo)",
+                labels={c_idade: "Idade (Dias/Semanas)", 'linhagem_sexo': "Linhagem (Sexo)"},
+                opacity=0.65,
+                nbins=30
+            )
+            fig_hist.update_layout(height=550, hovermode="x unified")
+            st.plotly_chart(fig_hist, use_container_width=True)
+            
+        with tab2:
+            # Boxplot exibindo a dispersão e mediana exata de cada subgrupo linhagem(sexo)
+            fig_box = px.box(
+                df_filtered, 
+                x='linhagem_sexo', 
+                y=c_idade, 
+                color='sexo_clean',
+                points="all",
+                title="Boxplot de Idades com Detecção de Outliers e Quartis",
+                labels={c_idade: "Idade", 'linhagem_sexo': "Linhagem (Sexo)", 'sexo_clean': "Sexo"}
+            )
+            fig_box.update_layout(height=550)
+            st.plotly_chart(fig_box, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- EXTRAÇÃO ESTATÍSTICA MÁXIMA ---
+        st.subheader("📈 Relatório Estatístico Agrupado")
+        
+        # Tabela dinâmica com o resumo de cada Linhagem(Sexo)
+        resumo_estatistico = df_filtered.groupby('linhagem_sexo')[c_idade].agg(
+            Total_N='count',
+            Média='mean',
+            Mediana='median',
+            Desvio_Padrão=lambda x: np.std(x, ddof=1) if len(x) > 1 else 0,
+            Erro_Padrão=lambda x: stats.sem(x) if len(x) > 1 else 0,
+            Mínimo='min',
+            Máximo='max'
+        ).reset_index()
+        
+        # Formatação para exibição limpa
+        for col in ['Média', 'Mediana', 'Desvio_Padrão', 'Erro_Padrão']:
+            resumo_estatistico[col] = resumo_estatistico[col].round(3)
+            
+        st.dataframe(resumo_estatistico, use_container_width=True, hide_index=True)
+
+        # --- TESTES DE HIPÓTESES AUTOMÁTICOS ---
+        st.markdown("---")
+        st.subheader("🔬 Inferência Estatística Avançada")
+        
+        # 1. Comparação entre Linhagens (ANOVA ou Kruskal-Wallis)
+        grupos_linhagem = [df_filtered[df_filtered['linhagem_clean'] == lin][c_idade].values for lin in df_filtered['linhagem_clean'].unique()]
+        
+        if len(grupos_linhagem) > 1 and all(len(g) > 2 for g in grupos_linhagem):
+            st.markdown("**Comparação de Idade entre Linhagens Diferentes:**")
+            # Teste de normalidade rápido (Shapiro) para decidir o teste ideal
+            stat_sh, p_sh = stats.shapiro(df_filtered[c_idade].sample(min(len(df_filtered), 500)))
+            
+            if p_sh > 0.05:
+                # Dados Normais -> ANOVA
+                f_stat, p_val = stats.f_oneway(*grupos_linhagem)
+                teste_nome = "ANOVA (Paramétrico)"
             else:
-                # --- CÁLCULOS ESTATÍSTICOS ---
-                mean = float(np.mean(data))
-                std_err = float(stats.sem(data))
+                # Dados Não-Normais -> Kruskal-Wallis
+                f_stat, p_val = stats.kruskal(*grupos_linhagem)
+                teste_nome = "Kruskal-Wallis (Não-Paramétrico)"
                 
-                # Intervalo de Confiança de 95% (Distribuição t de Student)
-                ci_95 = stats.t.interval(0.95, df=n-1, loc=mean, scale=std_err)
-                
-                # Outras métricas
-                median = float(np.median(data))
-                
-                # Correção segura para a Moda nas versões recentes do SciPy
-                mode_res = stats.mode(data, keepdims=True)
-                if mode_res.mode.size > 0:
-                    mode_val = float(mode_res.mode.flatten()[0])
-                else:
-                    mode_val = np.nan
-                    
-                std_dev = float(np.std(data, ddof=1))
-                variance = float(np.var(data, ddof=1))
-                q25, q75 = np.percentile(data, [25, 75])
-                iqr = float(q75 - q25)
-                skewness = float(stats.skew(data))
-                kurtosis = float(stats.kurtosis(data))
-                
-                # --- EXIBIÇÃO EM DESTAQUE: INTERVALO DE CONFIANÇA ---
-                st.subheader("🎯 Intervalo de Confiança de 95% para a Média")
-                col_ic1, col_ic2, col_ic3 = st.columns(3)
-                col_ic1.metric("Limite Inferior (95%)", f"{ci_95[0]:.4f}")
-                col_ic2.metric("Média Amostral", f"{mean:.4f}")
-                col_ic3.metric("Limite Superior (95%)", f"{ci_95[1]:.4f}")
-                
-                st.info(f"Com 95% de confiança, a verdadeira média da população está contida no intervalo entre **{ci_95[0]:.4f}** e **{ci_95[1]:.4f}**.")
-                
-                st.markdown("---")
-                
-                # --- PAINEL DE MÉTRICAS ---
-                st.subheader("📈 Resumo Estatístico")
-                
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Total de Observações (N)", n)
-                c2.metric("Média", f"{mean:.4f}")
-                c3.metric("Mediana", f"{median:.4f}")
-                if not np.isnan(mode_val):
-                    c4.metric("Moda", f"{mode_val:.4f}")
-                else:
-                    c4.metric("Moda", "N/A")
-                
-                c5, c6, c7, c8 = st.columns(4)
-                c5.metric("Desvio Padrão", f"{std_dev:.4f}")
-                c6.metric("Variância", f"{variance:.4f}")
-                c7.metric("Erro Padrão da Média", f"{std_err:.4f}")
-                c8.metric("Amplitude Interquartil (IQR)", f"{iqr:.4f}")
-                
-                c9, c10, c11, c12 = st.columns(4)
-                c9.metric("Valor Mínimo", f"{float(np.min(data)):.4f}")
-                c10.metric("1º Quartil (25%)", f"{float(q25):.4f}")
-                c11.metric("3º Quartil (75%)", f"{float(q75):.4f}")
-                c12.metric("Valor Máximo", f"{float(np.max(data)):.4f}")
-                
-                c13, c14 = st.columns(2)
-                c13.metric("Assimetria (Skewness)", f"{skewness:.4f}")
-                c14.metric("Curtose (Kurtosis)", f"{kurtosis:.4f}")
-                
-                st.markdown("---")
-                
-                # --- VISUALIZAÇÃO GRÁFICA ---
-                st.subheader("📊 Visualização dos Dados")
-                
-                tab1, tab2 = st.tabs(["Histograma com IC 95%", "Boxplot"])
-                
-                with tab1:
-                    # Criando DataFrame temporário limpo para o Plotly Express rodar sem problemas de indexação
-                    plot_df = pd.DataFrame({selected_col: data})
-                    fig_hist = px.histogram(plot_df, x=selected_col, nbins=30, title="Distribuição dos Dados", marginal="rug")
-                    
-                    # Correção: Passando os índices corretos [0] e [1] para as linhas verticais
-                    fig_hist.add_vline(x=mean, line_dash="solid", line_color="red", annotation_text="Média")
-                    fig_hist.add_vline(x=float(ci_95[0]), line_dash="dash", line_color="green", annotation_text="IC 95% Inf")
-                    fig_hist.add_vline(x=float(ci_95[1]), line_dash="dash", line_color="green", annotation_text="IC 95% Sup")
-                    
-                    fig_hist.update_layout(autosize=True, height=500)
-                    st.plotly_chart(fig_hist, use_container_width=True)
-                    
-                with tab2:
-                    # Correção: Usando os dados filtrados em um novo DataFrame limpo para evitar conflitos no Streamlit Cloud
-                    fig_box = px.box(plot_df, y=selected_col, points="all", title="Boxplot com Detecção de Outliers")
-                    fig_box.update_layout(autosize=True, height=500)
-                    st.plotly_chart(fig_box, use_container_width=True)
+            if p_val < 0.05:
+                st.error(f"🔴 **Diferença Significativa Encontrada!** ({teste_nome}: p-valor = {p_val:.5f}). As idades variam de forma relevante entre as linhagens.")
+            else:
+                st.info(f"🟢 **Sem Diferença Significativa.** ({teste_nome}: p-valor = {p_val:.5f}). As idades médias das linhagens são estatisticamente similares.")
+        
+        # 2. Comparação entre Sexos (M vs F)
+        machos = df_filtered[df_filtered['sexo_clean'].isin(['M', 'MACHO', 'MALE'])][c_idade].values
+        femeas = df_filtered[df_filtered['sexo_clean'].isin(['F', 'FEMEA', 'FEMALE', 'FE'])][c_idade].values
+        
+        if len(machos) > 2 and len(femeas) > 2:
+            st.markdown("**Comparação de Idade entre Machos vs Fêmeas (Geral):**")
+            t_stat, p_val_sex = stats.mannwhitneyu(machos, femeas, alternative='two-sided')
+            
+            if p_val_sex < 0.05:
+                st.error(f"🔴 **Diferença Significativa entre Sexos!** (Mann-Whitney U: p-valor = {p_val_sex:.5f}). Machos e fêmeas possuem idades de descarte/análise significativamente diferentes.")
+            else:
+                st.info(f"🟢 **Sem Diferença Significativa entre Sexos.** (Mann-Whitney U: p-valor = {p_val_sex:.5f}). Não há disparidade estatística nas idades de machos e fêmeas.")
 
     except Exception as e:
-        st.error(f"Erro ao processar o arquivo: {e}")
+        st.error(f"Erro ao processar e calcular estatísticas do arquivo: {e}")
+        st.info("💡 Dica: Verifique se os nomes das colunas na sua planilha contêm palavras como 'Idade', 'Linhagem' e 'Sexo'.")
 else:
-    st.info("Aguardando o envio do arquivo na barra lateral à esquerda.")
+    st.info("📊 Aguardando o envio do arquivo na barra lateral para renderizar o histograma e filtros padrão.")
