@@ -71,7 +71,6 @@ if uploaded_file is not None:
         idades_reais = df_clean[c_idade].values
         
         if len(idades_reais) > 1:
-            # np.histogram_bin_edges calcula o número e os limites ótimos de intervalos usando algoritmos automáticos combinados
             quebras_calculadas = np.histogram_bin_edges(idades_reais, bins='auto')
             quebras_calculadas = np.unique(np.round(quebras_calculadas).astype(int))
             if len(quebras_calculadas) < 2:
@@ -90,7 +89,7 @@ if uploaded_file is not None:
             df_clean[c_idade], 
             bins=quebras_calculadas, 
             labels=rotulos_matematicos, 
-            right=False, # Garante o comportamento clássico de fechado à esquerda e aberto à direita [a, b)
+            right=False,
             include_lowest=True
         )
 
@@ -98,7 +97,6 @@ if uploaded_file is not None:
         st.sidebar.markdown("---")
         st.sidebar.subheader("3. Filtros Ativos")
         
-        # Filtro combinando Linhagem e Sexo livre
         todos_grupos_combinados = sorted(df_clean['linhagem_sexo'].unique())
         sub_grupos = st.sidebar.multiselect(
             "Filtrar por Linhagem(Sexo):", 
@@ -106,7 +104,6 @@ if uploaded_file is not None:
             default=todos_grupos_combinados
         )
         
-        # Filtro estrito de categorias mapeadas
         categorias_descarte_disponiveis = sorted(df_clean['descarte_categoria'].unique())
         sub_descartes = st.sidebar.multiselect(
             "Filtrar Tipo de Descarte (Vazio = Todos):", 
@@ -114,7 +111,6 @@ if uploaded_file is not None:
             default=[]
         )
             
-        # Aplicação dos filtros selecionados
         df_filtered = df_clean[df_clean['linhagem_sexo'].isin(sub_grupos)]
         if len(sub_descartes) > 0:
             df_filtered = df_filtered[df_filtered['descarte_categoria'].isin(sub_descartes)]
@@ -125,13 +121,11 @@ if uploaded_file is not None:
 
         # --- VISUALIZAÇÃO GRÁFICA ---
         st.subheader("📊 Análise Visual de Distribuição e Descarte")
-        
-        st.info(f"📊 **Notação Estatística Utilizada:** Os intervalos abaixo utilizam a convenção $[a \vdash b)$, indicando que o limite inicial faz parte do grupo, mas o limite final pertence à próxima faixa.")
+        st.info("📊 **Notação Estatística Utilizada:** Os intervalos abaixo utilizam a convenção $[a \vdash b)$, indicando que o limite inicial faz parte do grupo, mas o limite final pertence à próxima faixa.")
         
         tab1, tab2, tab3 = st.tabs(["Contagem por Faixa de Idade (Estatístico)", "Histograma Contínuo", "Boxplot de Outliers"])
         
         with tab1:
-            # Agrupa e conta usando as faixas calculadas estatisticamente
             df_counts = df_filtered.groupby(['faixa_idade', 'linhagem_sexo'], observed=False).size().reset_index(name='Quantidade de Descartes')
             
             fig_bar = px.bar(
@@ -214,3 +208,10 @@ if uploaded_file is not None:
                 teste_nome = "Kruskal-Wallis (Não-Paramétrico)"
                 
             if p_val < 0.05:
+                st.error(f"🔴 **Diferença Significativa Encontrada!** ({teste_nome}: p-valor = {p_val:.5f}). As idades variam de forma relevante entre os grupos filtrados.")
+            else:
+                st.info(f"🟢 **Sem Diferença Significativa.** ({teste_nome}: p-valor = {p_val:.5f}). As idades dos grupos filtrados são estatisticamente comparáveis.")
+
+    except Exception as e:
+        st.error(f"Erro crítico ao processar o arquivo: {e}")
+else:
