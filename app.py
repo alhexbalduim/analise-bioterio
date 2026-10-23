@@ -8,7 +8,7 @@ import plotly.express as px
 st.set_page_config(page_title="Analisador de Linhagens e Idades", layout="wide")
 
 st.title("🧬 Analisador Estatístico de Linhagens e Bioterio")
-st.write("Analise faixas de idade calculadas estatisticamente por grupos combinados de Linhagem(Sexo), aplique filtros customizados e visualize a contagem de descartes.")
+st.write("Analise faixas matematicas de idade por grupos combinados de Linhagem(Sexo) com filtros focados em Descarte e testes estatisticos.")
 
 # Sidebar para Upload
 uploaded_file = st.sidebar.file_uploader("1. Envie seu arquivo (XLSX, XLS ou CSV)", type=["xlsx", "xls", "csv"])
@@ -38,11 +38,7 @@ if uploaded_file is not None:
         c_idade = st.sidebar.selectbox("Coluna de IDADE:", colunas_originais, index=encontrar_padrao("idade", colunas_originais))
         c_linha = st.sidebar.selectbox("Coluna de LINHAGEM:", colunas_originais, index=encontrar_padrao("linhagem", colunas_originais))
         c_sexo = st.sidebar.selectbox("Coluna de SEXO:", colunas_originais, index=encontrar_padrao("sexo", colunas_originais))
-        
-        adicionar_descarte = st.sidebar.checkbox("Minha planilha tem coluna de Descarte", value=True)
-        c_desc = None
-        if adicionar_descarte:
-            c_desc = st.sidebar.selectbox("Coluna de DESCARTE:", colunas_originais, index=encontrar_padrao("descarte", colunas_originais))
+        c_desc = st.sidebar.selectbox("Coluna de DESCARTE:", colunas_originais, index=encontrar_padrao("descarte", colunas_originais))
 
         # --- LIMPEZA PROFUNDA E CONSTRUÇÃO DOS GRUPOS ---
         df_clean = df.copy()
@@ -55,42 +51,56 @@ if uploaded_file is not None:
         df_clean = df_clean[~df_clean['linhagem_clean'].isin(['NAN', 'NONE', '', 'NAT'])]
         df_clean = df_clean[~df_clean['sexo_clean'].isin(['NAN', 'NONE', '', 'NAT'])]
         
-        if c_desc:
-            df_clean['descarte_clean'] = df_clean[c_desc].astype(str).str.strip().str.upper()
-            df_clean = df_clean[~df_clean['descarte_clean'].isin(['NAN', 'NONE', '', 'NAT'])]
+        # Agrupamento padronizado de Descartes solicitado: E, Z ou Outros
+        df_clean['descarte_bruto'] = df_clean[c_desc].astype(str).str.strip().str.upper()
+        
+        def mapear_descarte(val):
+            if val in ['E', 'EUTANÁSIA', 'EUTANASIA', 'EUTANÁSICA']:
+                return 'EUTANÁSIA (E)'
+            elif val in ['Z', 'ZOOLÓGICO', 'ZOOLOGICO']:
+                return 'ZOOLÓGICO (Z)'
+            else:
+                return 'OUTROS'
+                
+        df_clean['descarte_categoria'] = df_clean['descarte_bruto'].apply(mapear_descarte)
 
+        # Criando a string combinada padrão solicitada: BALB(M), BALB(F)
         df_clean['linhagem_sexo'] = df_clean['linhagem_clean'] + "(" + df_clean['sexo_clean'] + ")"
 
-        # --- CÁLCULO ESTATÍSTICO DO TAMANHO DO INTERVALO (BIN WIDTH) ---
+        # --- CÁLCULO ESTATÍSTICO AUTOMÁTICO DE INTERVALOS (BI-DIRECTIONAL BINS) ---
         idades_reais = df_clean[c_idade].values
-        n_amostra = len(idades_reais)
         
-        if n_amostra > 1:
-            q75, q25 = np.percentile(idades_reais, [75, 25])
-            iqr = q75 - q25
-            
-            if iqr > 0:
-                tamanho_intervalo = 2 * iqr / (n_amostra ** (1/3))
-            else:
-                tamanho_intervalo = (idades_reais.max() - idades_reais.min()) / (np.log2(n_amostra) + 1)
-            
-            tamanho_intervalo = max(1, int(np.round(tamanho_intervalo)))
+        if len(idades_reais) > 1:
+            # np.histogram_bin_edges com 'auto' calcula o número ótimo de intervalos com base em Freedman-Diaconis e Sturges
+            quebras_calculadas = np.histogram_bin_edges(idades_reais, bins='auto')
+            # Converte para inteiros para visualização limpa nas faixas do bioterio
+            quebras_calculadas = np.unique(np.round(quebras_calculadas).astype(int))
+            if len(quebras_calculadas) < 2:
+                quebras_calculadas = np.array([int(idades_reais.min()), int(idades_reais.max() + 1)])
         else:
-            tamanho_intervalo = 5
+            quebras_calculadas = np.array([0, 30, 60])
 
-        min_idade = int(np.floor(idades_reais.min()))
-        max_idade = int(np.ceil(idades_reais.max()))
-        
-        # Cria as quebras (bins) baseadas no tamanho do intervalo calculado estatisticamente
-        bins = list(range(min_idade, max_idade + tamanho_intervalo + 1, tamanho_intervalo))
-        labels = [f"{bins[i]} a {bins[i+1]-1}" for i in range(len(bins)-1)]
-        
-        df_clean['faixa_idade'] = pd.cut(df_clean[c_idade], bins=bins, labels=labels, right=False)
+        # Criação dos rótulos matemáticos na notação de intervalo clássica: [a, b) ou a ⊢ b
+        # Indica fechado à esquerda (inclui o valor inicial) e aberto à direita (exclui o valor final)
+        rotulos_matematicos = []
+        for i in range(len(quebras_calculadas)-1):
+            inicio = quebras_calculadas[i]
+            fim = quebras_calculadas[i+1]
+            rotulos_matematicos.append(f"[{inicio} ⊢ {fim})")
+            
+        df_clean['faixa_idade'] = pd.cut(
+            df_clean[c_idade], 
+            bins=quebras_calculadas, 
+            labels=rotulos_matematicos, 
+            right=False, # Garante o comportamento clássico de [a, b) fechado à esquerda e aberto à direita
+            include_lowest=True
+        )
 
-        # --- PAINEL DE FILTROS NA SIDEBAR ---
+        # --- PAINEL DE FILTROS SIMPLIFICADO NA SIDEBAR ---
         st.sidebar.markdown("---")
         st.sidebar.subheader("3. Filtros Ativos")
         
+        # Filtro combinando Linhagem e Sexo livre
         todos_grupos_combinados = sorted(df_clean['linhagem_sexo'].unique())
         sub_grupos = st.sidebar.multiselect(
             "Filtrar por Linhagem(Sexo):", 
@@ -98,14 +108,18 @@ if uploaded_file is not None:
             default=todos_grupos_combinados
         )
         
-        sub_descartes = []
-        if c_desc:
-            todos_descartes = sorted(df_clean['descarte_clean'].unique())
-            sub_descartes = st.sidebar.multiselect("Filtrar Tipo de Descarte (Vazio = Todos):", todos_descartes, default=[])
+        # Filtro estrito de categorias mapeadas
+        categorias_descarte_disponiveis = sorted(df_clean['descarte_categoria'].unique())
+        sub_descartes = st.sidebar.multiselect(
+            "Filtrar Tipo de Descarte (Vazio = Todos):", 
+            categorias_descarte_disponiveis, 
+            default=[]
+        )
             
+        # Aplicação dos filtros selecionados
         df_filtered = df_clean[df_clean['linhagem_sexo'].isin(sub_grupos)]
-        if c_desc and len(sub_descartes) > 0:
-            df_filtered = df_filtered[df_filtered['descarte_clean'].isin(sub_descartes)]
+        if len(sub_descartes) > 0:
+            df_filtered = df_filtered[df_filtered['descarte_categoria'].isin(sub_descartes)]
             
         if df_filtered.empty:
             st.error("⚠️ Nenhum dado sobrou para a combinação de filtros selecionada.")
@@ -114,11 +128,12 @@ if uploaded_file is not None:
         # --- VISUALIZAÇÃO GRÁFICA ---
         st.subheader("📊 Análise Visual de Distribuição e Descarte")
         
-        st.info(f"💡 **Cálculo de Distribuição Automático:** Com base na variabilidade dos dados entregues, o tamanho ideal calculado para cada intervalo de idade foi de **{tamanho_intervalo} dias/unidades**.")
+        st.info(f"📊 **Notação Estatística Utilizada:** Os intervalos abaixo utilizam a convenção $[a \vdash b)$, indicando que o limite inicial faz parte do grupo, mas o limite final pertence à próxima faixa.")
         
         tab1, tab2, tab3 = st.tabs(["Contagem por Faixa de Idade (Estatístico)", "Histograma Contínuo", "Boxplot de Outliers"])
         
         with tab1:
+            # Agrupa e conta usando as faixas calculadas estatisticamente
             df_counts = df_filtered.groupby(['faixa_idade', 'linhagem_sexo'], observed=False).size().reset_index(name='Quantidade de Descartes')
             
             fig_bar = px.bar(
@@ -127,8 +142,8 @@ if uploaded_file is not None:
                 y='Quantidade de Descartes',
                 color='linhagem_sexo',
                 barmode='group',
-                title=f"Quantidade de Descartes por Faixas Reais Calculadas (Intervalos de {tamanho_intervalo} em {tamanho_intervalo})",
-                labels={'faixa_idade': 'Intervalos de Idade Calculados', 'linhagem_sexo': 'Linhagem (Sexo)'},
+                title="Quantidade de Descartes por Intervalos Matemáticos Ajustados automaticamente",
+                labels={'faixa_idade': 'Intervalos Reais de Idade [Início ⊢ Fim)', 'linhagem_sexo': 'Linhagem (Sexo)'},
                 text_auto=True
             )
             fig_bar.update_layout(height=550)
@@ -144,7 +159,7 @@ if uploaded_file is not None:
                 title="Distribuição de Frequência Contínua da Idade",
                 labels={c_idade: f"Idade ({c_idade})", 'linhagem_sexo': "Linhagem (Sexo)"},
                 opacity=0.65,
-                nbins=len(bins)
+                nbins=len(quebras_calculadas)
             )
             fig_hist.update_layout(height=550, hovermode="x unified")
             st.plotly_chart(fig_hist, use_container_width=True)
@@ -198,14 +213,3 @@ if uploaded_file is not None:
                 teste_nome = "ANOVA (Paramétrico)"
             else:
                 f_stat, p_val = stats.kruskal(*grupos_teste)
-                teste_nome = "Kruskal-Wallis (Não-Paramétrico)"
-                
-            if p_val < 0.05:
-                st.error(f"🔴 **Diferença Significativa Encontrada!** ({teste_nome}: p-valor = {p_val:.5f}). As idades variam de forma relevante entre os grupos filtrados.")
-            else:
-                st.info(f"🟢 **Sem Diferença Significativa.** ({teste_nome}: p-valor = {p_val:.5f}). As idades dos grupos filtrados são estatisticamente comparáveis.")
-
-    except Exception as e:
-        st.error(f"Erro crítico ao processar o arquivo: {e}")
-else:
-    st.info("📊 Aguardando o envio do arquivo na barra lateral para renderizar o painel customizado.")
