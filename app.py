@@ -3,137 +3,152 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
-# Configuração da página
-st.set_page_config(page_title="Analisador de Linhagens e Idades", layout="wide")
+# Configura a página do painel
+st.set_page_config(page_title="Gestão de Biotério", layout="wide")
 
-st.title("🧬 Analisador de Frequência de Linhagens e Bioterio")
-st.write("Visualização da distribuição de frequência por intervalos matemáticos de idade versus o combo Linhagem(Sexo).")
+st.title("🧬 Analisador de Distribuição e Intervalo de Classes")
+st.write("Insira sua planilha Excel ou CSV para calcular as faixas de idades e o perfil de descarte por Linhagem e Sexo.")
 
-# Sidebar para Upload
-uploaded_file = st.sidebar.file_uploader("1. Envie seu arquivo (XLSX, XLS ou CSV)", type=["xlsx", "xls", "csv"])
+# Componente de Upload na Barra Lateral
+uploaded_file = st.sidebar.file_uploader("1. Selecione o arquivo de dados", type=["xlsx", "xls", "csv"])
 
 if uploaded_file is not None:
     try:
-        # Leitura do arquivo
+        # Leitura automatizada do formato
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
             
-        st.success("Arquivo carregado com sucesso!")
+        st.success("Planilha importada com sucesso!")
         
-        # Lista real de colunas encontradas na planilha do usuário
-        colunas_originais = list(df.columns)
+        # Mapeamento manual de colunas para evitar quebras por nomes diferentes
+        colunas_reais = list(df.columns)
         
         st.sidebar.markdown("---")
-        st.sidebar.subheader("2. Mapeamento de Colunas")
+        st.sidebar.subheader("2. Identifique as Colunas")
         
-        def encontrar_padrao(termo, lista):
+        def identificar_coluna(termo, lista):
             for i, col in enumerate(lista):
                 if termo in str(col).lower():
                     return i
             return 0
+            
+        col_idade = st.sidebar.selectbox("Coluna de IDADE:", colunas_reais, index=identificar_coluna("idade", colunas_reais))
+        col_linha = st.sidebar.selectbox("Coluna de LINHAGEM:", colunas_originais:=colunas_reais, index=identificar_coluna("linhagem", colunas_reais))
+        col_sexo = st.sidebar.selectbox("Coluna de SEXO:", colunas_reais, index=identificar_coluna("sexo", colunas_reais))
 
-        c_idade = st.sidebar.selectbox("Coluna de IDADE:", colunas_originais, index=encontrar_padrao("idade", colunas_originais))
-        c_linha = st.sidebar.selectbox("Coluna de LINHAGEM:", colunas_originais, index=encontrar_padrao("linhagem", colunas_originais))
-        c_sexo = st.sidebar.selectbox("Coluna de SEXO:", colunas_originais, index=encontrar_padrao("sexo", colunas_originais))
+        # --- PROCESSAMENTO E PADRONIZAÇÃO DOS DADOS ---
+        df_processado = df.copy()
+        
+        # Converte idade para numérico e remove linhas em branco
+        df_processado[col_idade] = pd.to_numeric(df_processado[col_idade], errors='coerce')
+        df_processado = df_processado.dropna(subset=[col_idade])
+        
+        # Padroniza textos para maiúsculas e remove espaços vazios nas pontas
+        df_processado['Linhagem_Limpa'] = df_processado[col_linha].astype(str).str.strip().str.upper()
+        df_processado['Sexo_Limpo'] = df_processado[col_sexo].astype(str).str.strip().str.upper()
+        
+        # Remove eventuais textos corrompidos de preenchimento vazios
+        df_processado = df_processado[~df_processado['Linhagem_Limpa'].isin(['NAN', 'NONE', '', 'NAT'])]
+        df_processado = df_processado[~df_processado['Sexo_Limpo'].isin(['NAN', 'NONE', '', 'NAT'])]
+        
+        # Criação do combo solicitado: ex. BALB(M), C57(F)
+        df_processado['Linhagem_Sexo'] = df_processado['Linhagem_Limpa'] + "(" + df_processado['Sexo_Limpo'] + ")"
 
-        # --- LIMPEZA PROFUNDA E CONSTRUÇÃO DOS GRUPOS ---
-        df_clean = df.copy()
-        df_clean['linhagem_clean'] = df_clean[c_linha].astype(str).str.strip().str.upper()
-        df_clean['sexo_clean'] = df_clean[c_sexo].astype(str).str.strip().str.upper()
-        
-        df_clean[c_idade] = pd.to_numeric(df_clean[c_idade], errors='coerce')
-        df_clean = df_clean.dropna(subset=[c_idade])
-        
-        df_clean = df_clean[~df_clean['linhagem_clean'].isin(['NAN', 'NONE', '', 'NAT'])]
-        df_clean = df_clean[~df_clean['sexo_clean'].isin(['NAN', 'NONE', '', 'NAT'])]
-        
-        # Criando a string combinada padrão solicitada: BALB(M), C57BL/6(F)
-        df_clean['linhagem_sexo'] = df_clean['linhagem_clean'] + "(" + df_clean['sexo_clean'] + ")"
-
-        # --- PAINEL DE FILTROS NA SIDEBAR ---
+        # --- INTERFACE DE FILTROS (LINHAGEM E SEXO) ---
         st.sidebar.markdown("---")
-        st.sidebar.subheader("3. Filtros do Painel")
+        st.sidebar.subheader("3. Filtros de Seleção")
         
-        # Filtro de Linhagem Pura
-        todas_linhagens = sorted(df_clean['linhagem_clean'].unique())
-        sub_linhagens = st.sidebar.multiselect("Filtrar Linhagens:", todas_linhagens, default=todas_linhagens)
+        lista_linhagens = sorted(df_processado['Linhagem_Limpa'].unique())
+        filtro_linhagem = st.sidebar.multiselect("Filtrar Linhagens:", lista_linhagens, default=lista_linhagens)
         
-        # Filtro de Sexo Puro
-        todos_sexos = sorted(df_clean['sexo_clean'].unique())
-        sub_sexos = st.sidebar.multiselect("Filtrar Sexo:", todos_sexos, default=todos_sexos)
-            
-        # Aplicação dos filtros selecionados
-        df_filtered = df_clean[
-            (df_clean['linhagem_clean'].isin(sub_linhagens)) & 
-            (df_clean['sexo_clean'].isin(sub_sexos))
+        lista_sexos = sorted(df_processado['Sexo_Limpo'].unique())
+        filtro_sexo = st.sidebar.multiselect("Filtrar Sexo:", lista_sexos, default=lista_sexos)
+        
+        # Aplicação dos filtros escolhidos pelo usuário
+        df_filtrado = df_processado[
+            (df_processado['Linhagem_Limpa'].isin(filtro_linhagem)) & 
+            (df_processado['Sexo_Limpo'].isin(filtro_sexo))
         ]
-            
-        if df_filtered.empty:
-            st.error("⚠️ Nenhum dado sobrou para a combinação de filtros selecionada.")
+        
+        if df_filtrado.empty:
+            st.warning("⚠️ Nenhum registro corresponde aos filtros selecionados na barra lateral.")
             st.stop()
 
-        # --- CÁLCULO ESTATÍSTICO AUTOMÁTICO DE INTERVALOS ---
-        idades_reais = df_filtered[c_idade].values
+        # --- CÁLCULO MATEMÁTICO DOS INTERVALOS DE CLASSE ---
+        vetor_idades = df_filtrado[col_idade].values
         
-        if len(idades_reais) > 1:
-            # Calcula automaticamente as quebras ideais usando a fórmula matemática baseada nos dados filtrados
-            quebras_calculadas = np.histogram_bin_edges(idades_reais, bins='auto')
-            quebras_calculadas = np.unique(np.round(quebras_calculadas).astype(int))
-            if len(quebras_calculadas) < 2:
-                quebras_calculadas = np.array([int(idades_reais.min()), int(idades_reais.max() + 1)])
+        if len(vetor_idades) > 1:
+            # np.histogram_bin_edges com 'auto' aplica Sturges e Freedman-Diaconis conforme o volume de dados
+            limites_classes = np.histogram_bin_edges(vetor_idades, bins='auto')
+            limites_classes = np.unique(np.round(limites_classes).astype(int))
+            if len(limites_classes) < 2:
+                limites_classes = np.array([int(vetor_idades.min()), int(vetor_idades.max() + 1)])
         else:
-            quebras_calculadas = np.array([int(idades_reais.min()), int(idades_reais.max() + 1)] if len(idades_reais) == 1 else)
+            limites_classes = np.array([int(vetor_idades.min()), int(vetor_idades.max() + 1)] if len(vetor_idades) == 1 else)
 
-        # Criação dos rótulos matemáticos na notação de intervalo clássica: [inicio ⊢ fim)
-        rotulos_matematicos = []
-        for i in range(len(quebras_calculadas)-1):
-            inicio = quebras_calculadas[i]
-            fim = quebras_calculadas[i+1]
-            rotulos_matematicos.append(f"[{inicio} ⊢ {fim})")
+        # Criação das legendas com notação estatística clássica: [inicio ⊢ fim)
+        legendas_classes = []
+        for idx in range(len(limites_classes) - 1):
+            regiao_inicio = limites_classes[idx]
+            regiao_fim = limites_classes[idx + 1]
+            legendas_classes.append(f"[{regiao_inicio} ⊢ {regiao_fim})")
             
-        df_filtered['faixa_idade'] = pd.cut(
-            df_filtered[c_idade], 
-            bins=quebras_calculadas, 
-            labels=rotulos_matematicos, 
+        df_filtrado['Classe_Idade'] = pd.cut(
+            df_filtrado[col_idade], 
+            bins=limites_classes, 
+            labels=legendas_classes, 
             right=False,
             include_lowest=True
         )
 
-        # --- VISUALIZAÇÃO GRÁFICA DA DISTRIBUIÇÃO ---
-        st.subheader("📊 Distribuição de Frequência de Animais")
-        st.info("📊 **Notação Estatística Utilizada:** Intervalos no formato $[a \vdash b)$, onde o limite inicial faz parte da contagem da barra, mas o limite final pertence à faixa seguinte.")
+        # --- CONSTRUÇÃO GRÁFICA ---
+        st.subheader("📊 Gráficos Analíticos de Distribuição")
+        aba_histograma, aba_boxplot = st.tabs(["Intervalo de Classes (Frequência)", "Boxplot de Idades Descartadas"])
         
-        # Agrupa e conta a quantidade exata de animais por faixa calculada e pelo combo linhagem_sexo
-        df_counts = df_filtered.groupby(['faixa_idade', 'linhagem_sexo'], observed=False).size().reset_index(name='Quantidade de Animais')
-        
-        fig_bar = px.bar(
-            df_counts,
-            x='faixa_idade',
-            y='Quantidade de Animais',
-            color='linhagem_sexo',
-            barmode='group',
-            title="Quantidade de Animais por Intervalos de Frequência Calculados Matemáticos",
-            labels={'faixa_idade': 'Intervalos Reais de Idade [Início ⊢ Fim)', 'linhagem_sexo': 'Linhagem (Sexo)'},
-            text_auto=True
-        )
-        fig_bar.update_layout(height=600)
-        st.plotly_chart(fig_bar, use_container_width=True)
+        with aba_histograma:
+            st.info("📊 **Notação Utilizada:** Intervalos no formato $[a \vdash b)$ indicam que o animal com a idade inicial está incluído na barra, mas o número limite final fará parte da barra seguinte.")
+            
+            # Contagem real por faixa calculada e pelo combo criado
+            contagem_classes = df_filtrado.groupby(['Classe_Idade', 'Linhagem_Sexo'], observed=False).size().reset_index(name='Quantidade de Animais')
+            
+            grafico_barras = px.bar(
+                contagem_classes,
+                x='Classe_Idade',
+                y='Quantidade de Animais',
+                color='Linhagem_Sexo',
+                barmode='group',
+                title="Distribuição de Animais por Intervalo de Classes Calculado",
+                labels={'Classe_Idade': 'Intervalos de Classes de Idade', 'Quantidade de Animais': 'Contagem de Animais'},
+                text_auto=True
+            )
+            grafico_barras.update_layout(height=550)
+            st.plotly_chart(grafico_barras, use_container_width=True)
+            
+        with aba_boxplot:
+            grafico_box = px.box(
+                df_filtrado,
+                x='Linhagem_Sexo',
+                y=col_idade,
+                color='Sexo_Limpo',
+                points="all",
+                title="Boxplot de Distribuição de Idades por Grupo com Outliers",
+                labels={col_idade: 'Idade Observada', 'Linhagem_Sexo': 'Agrupamento Linhagem(Sexo)'}
+            )
+            grafico_box.update_layout(height=550)
+            st.plotly_chart(grafico_box, use_container_width=True)
 
+        # --- EXIBIÇÃO DA TABELA CONSOLIDADA ---
         st.markdown("---")
-
-        # --- TABELA DE DISTRIBUIÇÃO DE FREQUÊNCIA ---
-        st.subheader("📋 Tabela Resumo de Frequências")
-        
-        # Exibe os dados contados em formato de planilha limpa para exportação ou conferência
+        st.subheader("📋 Tabela Consolidada de Frequências")
         st.dataframe(
-            df_counts[df_counts['Quantidade de Animais'] > 0], 
-            use_container_width=True, 
+            contagem_classes[contagem_classes['Quantidade de Animais'] > 0],
+            use_container_width=True,
             hide_index=True
         )
 
-    except Exception as e:
-        st.error(f"Erro crítico ao processar o arquivo: {e}")
+    except Exception as erro:
+        st.error(f"Não foi possível processar a estrutura do arquivo. Detalhes: {erro}")
 else:
-    st.info("📊 Aguardando o envio do arquivo na barra lateral para gerar a distribuição de frequência.")
+    st.info("📊 Aguardando o upload de um arquivo de dados (.xlsx, .xls ou .csv) na barra lateral esquerda para gerar as análises.")
