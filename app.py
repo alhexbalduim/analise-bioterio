@@ -66,17 +66,14 @@ if uploaded_file is not None:
         n_amostra = len(idades_reais)
         
         if n_amostra > 1:
-            # Regra de Freedman-Diaconis: Baseada na Amplitude Interquartil (IQR), ótima para dados reais com outliers
-            q75, q25 = np.percentile(idades_reais, [75 ,25])
+            q75, q25 = np.percentile(idades_reais, [75, 25])
             iqr = q75 - q25
             
             if iqr > 0:
                 tamanho_intervalo = 2 * iqr / (n_amostra ** (1/3))
             else:
-                # Fallback para Regra de Sturges se o IQR for zero (todos os animais com idades muito parecidas)
                 tamanho_intervalo = (idades_reais.max() - idades_reais.min()) / (np.log2(n_amostra) + 1)
             
-            # Arredonda o tamanho do intervalo para um número inteiro amigável (mínimo de 1)
             tamanho_intervalo = max(1, int(np.round(tamanho_intervalo)))
         else:
             tamanho_intervalo = 5
@@ -117,13 +114,11 @@ if uploaded_file is not None:
         # --- VISUALIZAÇÃO GRÁFICA ---
         st.subheader("📊 Análise Visual de Distribuição e Descarte")
         
-        # Informa ao usuário qual foi o intervalo calculado pelo algoritmo
         st.info(f"💡 **Cálculo de Distribuição Automático:** Com base na variabilidade dos dados entregues, o tamanho ideal calculado para cada intervalo de idade foi de **{tamanho_intervalo} dias/unidades**.")
         
         tab1, tab2, tab3 = st.tabs(["Contagem por Faixa de Idade (Estatístico)", "Histograma Contínuo", "Boxplot de Outliers"])
         
         with tab1:
-            # Agrupa e conta usando as faixas calculadas estatisticamente
             df_counts = df_filtered.groupby(['faixa_idade', 'linhagem_sexo'], observed=False).size().reset_index(name='Quantidade de Descartes')
             
             fig_bar = px.bar(
@@ -149,7 +144,7 @@ if uploaded_file is not None:
                 title="Distribuição de Frequência Contínua da Idade",
                 labels={c_idade: f"Idade ({c_idade})", 'linhagem_sexo': "Linhagem (Sexo)"},
                 opacity=0.65,
-                nbins=len(bins) # Alinha o número de colunas com as quebras calculadas
+                nbins=len(bins)
             )
             fig_hist.update_layout(height=550, hovermode="x unified")
             st.plotly_chart(fig_hist, use_container_width=True)
@@ -208,3 +203,9 @@ if uploaded_file is not None:
             if p_val < 0.05:
                 st.error(f"🔴 **Diferença Significativa Encontrada!** ({teste_nome}: p-valor = {p_val:.5f}). As idades variam de forma relevante entre os grupos filtrados.")
             else:
+                st.info(f"🟢 **Sem Diferença Significativa.** ({teste_nome}: p-valor = {p_val:.5f}). As idades dos grupos filtrados são estatisticamente comparáveis.")
+
+    except Exception as e:
+        st.error(f"Erro crítico ao processar o arquivo: {e}")
+else:
+    st.info("📊 Aguardando o envio do arquivo na barra lateral para renderizar o painel customizado.")
