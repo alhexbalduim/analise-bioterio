@@ -344,29 +344,77 @@ with aba_freq:
         include_lowest=True,
     )
 
+    # Cada combinação linhagem-sexo constitui uma série independente.
+    # Ex.: BALB (M) e BALB (F) aparecem como barras separadas em cada intervalo.
+    df_filtrado["Linhagem e sexo"] = (
+        df_filtrado["Linhagem"].astype(str).str.upper()
+        + " ("
+        + df_filtrado["Sexo"].astype(str).str.upper()
+        + ")"
+    )
+
+    # Soma a quantidade de animais separadamente em cada intervalo e grupo.
     frequencia = (
-        df_filtrado.groupby("Intervalo de idade", observed=False)["Quantidade"]
+        df_filtrado.groupby(
+            ["Intervalo de idade", "Linhagem e sexo"],
+            observed=True,
+            dropna=False,
+        )["Quantidade"]
         .sum()
-        .reindex(rotulos, fill_value=0)
         .rename("Quantidade de animais")
         .reset_index()
+    )
+
+    grupos = sorted(df_filtrado["Linhagem e sexo"].unique().tolist())
+    grade = pd.MultiIndex.from_product(
+        [rotulos, grupos], names=["Intervalo de idade", "Linhagem e sexo"]
+    ).to_frame(index=False)
+    metadados = df_filtrado[
+        ["Linhagem e sexo", "Linhagem", "Sexo"]
+    ].drop_duplicates()
+
+    frequencia = grade.merge(
+        frequencia,
+        on=["Intervalo de idade", "Linhagem e sexo"],
+        how="left",
+    ).merge(metadados, on="Linhagem e sexo", how="left")
+    frequencia["Quantidade de animais"] = (
+        frequencia["Quantidade de animais"].fillna(0)
     )
 
     fig_freq = px.bar(
         frequencia,
         x="Intervalo de idade",
         y="Quantidade de animais",
-        text="Quantidade de animais",
-        title="Distribuição de frequência das idades",
+        color="Linhagem e sexo",
+        barmode="group",
+        category_orders={
+            "Intervalo de idade": rotulos,
+            "Linhagem e sexo": grupos,
+        },
+        hover_data=["Linhagem", "Sexo"],
+        title="Distribuição de frequência por idade, linhagem e sexo",
+        labels={
+            "Intervalo de idade": "Intervalo de idade (dias)",
+            "Quantidade de animais": "Quantidade de animais",
+            "Linhagem e sexo": "Linhagem (sexo)",
+        },
     )
-    fig_freq.update_traces(textposition="outside", cliponaxis=False)
     fig_freq.update_layout(
-        xaxis_title="Intervalos de idade",
+        xaxis_title="Intervalos de idade (dias)",
         yaxis_title="Quantidade de animais",
         xaxis={"categoryorder": "array", "categoryarray": rotulos},
+        legend_title_text="Linhagem (sexo)",
         margin={"t": 70, "b": 70},
+        bargap=0.18,
+        bargroupgap=0.04,
     )
     st.plotly_chart(fig_freq, use_container_width=True)
+    st.caption(
+        "Cada cor e cada barra representam uma combinação diferente de linhagem e sexo "
+        "(por exemplo, BALB (M) e BALB (F)). As barras ficam lado a lado dentro de cada "
+        "intervalo de idade; use os filtros na barra lateral para simplificar o gráfico."
+    )
     st.dataframe(frequencia, use_container_width=True, hide_index=True)
 
 with aba_box:
