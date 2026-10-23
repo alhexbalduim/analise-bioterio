@@ -8,7 +8,7 @@ import plotly.express as px
 st.set_page_config(page_title="Analisador de Linhagens e Idades", layout="wide")
 
 st.title("🧬 Analisador Estatístico de Linhagens e Bioterio")
-st.write("Analise faixas matematicas de idade por grupos combinados de Linhagem(Sexo) com filtros focados em Descarte e testes estatisticos.")
+st.write("Analise faixas matemáticas de idade por grupos combinados de Linhagem(Sexo) com filtros focados em Descarte e testes estatísticos.")
 
 # Sidebar para Upload
 uploaded_file = st.sidebar.file_uploader("1. Envie seu arquivo (XLSX, XLS ou CSV)", type=["xlsx", "xls", "csv"])
@@ -67,21 +67,19 @@ if uploaded_file is not None:
         # Criando a string combinada padrão solicitada: BALB(M), BALB(F)
         df_clean['linhagem_sexo'] = df_clean['linhagem_clean'] + "(" + df_clean['sexo_clean'] + ")"
 
-        # --- CÁLCULO ESTATÍSTICO AUTOMÁTICO DE INTERVALOS (BI-DIRECTIONAL BINS) ---
+        # --- CÁLCULO ESTATÍSTICO AUTOMÁTICO DE INTERVALOS (BIN WIDTH E EDGES) ---
         idades_reais = df_clean[c_idade].values
         
         if len(idades_reais) > 1:
-            # np.histogram_bin_edges com 'auto' calcula o número ótimo de intervalos com base em Freedman-Diaconis e Sturges
+            # np.histogram_bin_edges calcula o número e os limites ótimos de intervalos usando algoritmos automáticos combinados
             quebras_calculadas = np.histogram_bin_edges(idades_reais, bins='auto')
-            # Converte para inteiros para visualização limpa nas faixas do bioterio
             quebras_calculadas = np.unique(np.round(quebras_calculadas).astype(int))
             if len(quebras_calculadas) < 2:
                 quebras_calculadas = np.array([int(idades_reais.min()), int(idades_reais.max() + 1)])
         else:
-            quebras_calculadas = np.array([0, 30, 60])
+            quebras_calculadas = np.array([0, 10])
 
         # Criação dos rótulos matemáticos na notação de intervalo clássica: [a, b) ou a ⊢ b
-        # Indica fechado à esquerda (inclui o valor inicial) e aberto à direita (exclui o valor final)
         rotulos_matematicos = []
         for i in range(len(quebras_calculadas)-1):
             inicio = quebras_calculadas[i]
@@ -92,7 +90,7 @@ if uploaded_file is not None:
             df_clean[c_idade], 
             bins=quebras_calculadas, 
             labels=rotulos_matematicos, 
-            right=False, # Garante o comportamento clássico de [a, b) fechado à esquerda e aberto à direita
+            right=False, # Garante o comportamento clássico de fechado à esquerda e aberto à direita [a, b)
             include_lowest=True
         )
 
@@ -142,7 +140,7 @@ if uploaded_file is not None:
                 y='Quantidade de Descartes',
                 color='linhagem_sexo',
                 barmode='group',
-                title="Quantidade de Descartes por Intervalos Matemáticos Ajustados automaticamente",
+                title="Quantidade de Descartes por Intervalos Matemáticos Ajustados Automaticamente",
                 labels={'faixa_idade': 'Intervalos Reais de Idade [Início ⊢ Fim)', 'linhagem_sexo': 'Linhagem (Sexo)'},
                 text_auto=True
             )
@@ -213,3 +211,6 @@ if uploaded_file is not None:
                 teste_nome = "ANOVA (Paramétrico)"
             else:
                 f_stat, p_val = stats.kruskal(*grupos_teste)
+                teste_nome = "Kruskal-Wallis (Não-Paramétrico)"
+                
+            if p_val < 0.05:
