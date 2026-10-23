@@ -76,7 +76,7 @@ if uploaded_file is not None:
             if len(quebras_calculadas) < 2:
                 quebras_calculadas = np.array([int(idades_reais.min()), int(idades_reais.max() + 1)])
         else:
-            quebras_calculadas = np.array([0, 10])
+            quebras_calculadas = np.array([0, 100])
 
         # Criação dos rótulos matemáticos na notação de intervalo clássica: [a, b) ou a ⊢ b
         rotulos_matematicos = []
@@ -200,6 +200,7 @@ if uploaded_file is not None:
             tamanho_amostra = min(len(df_filtered), 500)
             stat_sh, p_sh = stats.shapiro(df_filtered[c_idade].sample(tamanho_amostra, random_state=42))
             
+            # Escolha simplificada e linear do teste estatístico adequado
             if p_sh > 0.05:
                 f_stat, p_val = stats.f_oneway(*grupos_teste)
                 teste_nome = "ANOVA (Paramétrico)"
